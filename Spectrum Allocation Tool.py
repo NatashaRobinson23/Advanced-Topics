@@ -5,6 +5,7 @@ from enum import unique
 from importlib.readers import FileReader
 from threading import local
 from weakref import proxy
+from xml.dom import UserDataHandler
 import torch
 import time
 import random
@@ -91,7 +92,10 @@ class ScatterPlot:
         plt.title(title)
         plt.grid(True)
         plt.show()
-
+        
+    def colorCheck(self, userTensor, index):
+        return self.colors[userTensor[0][index]]
+        
 #-----------------------------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -131,12 +135,45 @@ if __name__ == "__main__":
         print("Target Penalty: ", targetPenalty)
 
         # Detering away from 550-600.
-        restrictedPenalty = torch.full((1, SwarmSize), 0.0)
+        restrictedPenalty = torch.zeros((1, SwarmSize))
         restrictedMask = (frequency >= 550) & (frequency <= 650)
         restrictedPenalty[restrictedMask] = 10**10
         print("Restricted Penalty: ", restrictedPenalty)
-               
-        totalPenalty = targetPenalty + restrictedPenalty
+        
+        # Proximity Evaluation. 
+        # Punish based on how far the particle is from the average of other particles of the same group.
+        proximityPenalty = torch.zeros((1, SwarmSize))
+        uniqueTypes = torch.unique(userTensor) # The different types possible (0 Police, 1 Civilian, 2 Fire). 
+        for userType in uniqueTypes:
+            frequenciesType = frequency[userTensor == userType] # Selects frequencies which are of the userType.            
+            distCentre = torch.mean(frequency[userTensor == userType]) 
+            proximityPenalty[userTensor == userType] = torch.sum(torch.abs(frequenciesType - distCentre)) 
+                                 
+            # Print Statements
+            print("User Tensor: ", userTensor)
+            print("Frequencies of the Current Type: ", userType, " ", frequenciesType)
+            print("Centre of Distribution: ", distCentre)
+            print("Proximity Penalty: ", proximityPenalty)
+            
+        # Repulsion Evaluation. WIP
+        # Repels certain groups from converging on top of one another. 
+                    # PROXIMITY CHECK - REPELLING DIFFERENT TYPES
+            # Builds off the grouping similar types section. 
+            
+            for otherUserType in uniqueTypes:
+                if otherUserType != userType:
+                    otherFrequenciesType = frequency[userTensor == otherUserType]
+                    if len(frequenciesType > 1): # Verifying that there's more than one frequency.
+                        repulsion += torch.mean(torch.abs(frequenciesType - torch.mean(otherFrequenciesType)))
+                        print("Repulsion: ", repulsion)
+            
+            cost = similarity - repulsion
+            print("Cost function: ", cost) # The higher this is the better. 
+                
+         
+            
+
+        totalPenalty = targetPenalty + restrictedPenalty + (10*proximityPenalty) # It is trying to minimise this. 
         print("Total Penalty: ", totalPenalty)
         return totalPenalty
 
@@ -147,7 +184,7 @@ if __name__ == "__main__":
     p.run()
     
     # Showing Particle Graphs. 
-    cycler = cycle(graphs[0].colors)
+    #cycler = cycle(graphs[0].colors)
     for i in range(1, SwarmSize+1):
-        graphs[i-1].showPlot("Spectrum Allocation: Swarm Particle {}".format(i), color=next(cycler))
+        graphs[i-1].showPlot("Spectrum Allocation: Swarm Particle {}".format(i), color=graphs[0].colorCheck(userTensor,i-1)) #color=next(cycler))
     plt.show()
