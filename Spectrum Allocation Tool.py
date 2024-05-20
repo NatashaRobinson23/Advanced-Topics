@@ -3,11 +3,14 @@
 # Library Imports
 from enum import unique
 from importlib.readers import FileReader
+from threading import local
 from weakref import proxy
 import torch
 import time
 import random
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from itertools import cycle
 
 # Main Class for Particle Swarm Optimization
 class ParticleSwarmOptimizer(object):
@@ -60,7 +63,7 @@ class ParticleSwarmOptimizer(object):
             self.enforce_bounds()
             self.current_fitness = self.fitness_function(self.frequency) # Penalty function. 
             local_mask = self.current_fitness<self.particle_best_fitness # Boolean, true when current fitness less than particle best fitness. 
-            self.particle_best[:,local_mask] = self.frequency[:,local_mask] # Updates the personal best positions for those only who were true. 
+            self.particle_best[local_mask] = self.frequency[local_mask] # Updates the personal best positions for those only who were true. 
             self.particle_best_fitness[local_mask] = self.current_fitness[local_mask] # Updates particle best fitness values for those who were true. 
             
             # If the fitness function is less than the global best fitness, update the global best fitness. 
@@ -71,12 +74,36 @@ class ParticleSwarmOptimizer(object):
             if (verbosity == True):
                 print('Iteration {:.0f} >> global best fitness {:.3f} | current mean fitness {:.3f} | iteration time {:.3f}'
                 .format(iteration + 1,self.global_best_fitness,self.current_fitness.mean(),toc-tic))
+                
+class ScatterPlot:
+    def __init__(self):
+        self.data = {'x': [], 'y': []}
+        self.colors = ['red','orange','yellow','green','blue','purple','pink']
+            
+    def append(self, x, y):
+        self.data['x'].append(x)
+        self.data['y'].append(y)
+            
+    def showPlot(self, title, color):
+        plt.plot(self.data['x'], self.data['y'], color=color)
+        plt.xlabel('Frequency')
+        plt.ylabel('Iteration')
+        plt.title(title)
+        plt.grid(True)
+        plt.show()
 
 #-----------------------------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
     SwarmSize = 10
+    iterations = 100
     
+    # Initialising Scatter Plot Graphs
+    graphs = []        
+    iterationCount = [0]
+    for i in range(1, SwarmSize+1):
+        graphs.append(ScatterPlot())
+        
     # Bounds -  Will be the frequency limits. 
     UpperBound = torch.tensor([2000])
     LowerBound = torch.tensor([0])
@@ -87,58 +114,40 @@ if __name__ == "__main__":
     roleList = ['Police', 'Civilian', 'Fire'] # For Readability: If 0, Police. If 1, Civilian. If 2, Fire. 
     userList = [[random.randint(0, 2) for _ in range(SwarmSize)]]
     userTensor = torch.tensor(userList)
-    
-    def plotting(frequency, userTensor):
-        arraynum = frequency.numpy()[0]
-        
+    plotCount = 0
 
-        plt.scatter(arraynum[0], 0, c=userTensor[0][0], cmap='viridis', marker='o')
-        plt.xlabel('Frequency')
-        plt.title('Swarm Frequencies')
-
-        
-        if (random.randint(0,10) == 0):
-            plt.show()
-        
-    
-    def plotting2(frequency, userTensor):
-        plt.clf()
-        arraynum = frequency.numpy()
-        
-        zeros_tensor = torch.zeros(len(arraynum[0]))
-
-        plt.scatter(arraynum[0], zeros_tensor, c=userTensor[0], cmap='viridis', marker='o')
-        plt.xlabel('Frequency')
-        plt.title('Swarm Frequencies')
-        
-        cbar = plt.colorbar(label='User Group')
-        cbar.set_ticks([0, 1, 2])
-        cbar.set_ticklabels(roleList)
-
-        
-        if (random.randint(0,10) == 0):
-            plt.show()
-        
-    
-    # Objective Function
+    # Objective Function. Creates a scoring system based on the constraints of the scenario. 
     def ObjectiveFunction(frequency):
-        print(frequency)
         
-
-        #plotting(frequency, userTensor)
+        # Adding to Scatter Plot.
+        iterationCount[0] += 1
+        print("Frequency: ", frequency)
+        for index in range(0, SwarmSize):
+            graphs[index].append(frequency.numpy()[0][index], iterationCount[0])
    
-        # Creates a scoring system based on the constraints of the scenario. 
-        target = torch.full((1,10), 500.0)
-        print("Target: ", target)
-        
-        value = torch.square(frequency - target)
-        print("value: ", value)
-        
-        return value
-        
+        # Target Value: 500. Incentivises Frequencies to converge towards this point. Parabolic Function. 
+        target = torch.full((1,SwarmSize), 500.0)
+        targetPenalty = torch.square(frequency - target)
+        print("Target Penalty: ", targetPenalty)
 
-    p = ParticleSwarmOptimizer(SwarmSize, options=[2,2,0.1,10,100]) # Options order: Cognitive, Social, Inertia, Velocity Limit, Iterations. 
+        # Detering away from 550-600.
+        restrictedPenalty = torch.full((1, SwarmSize), 0.0)
+        restrictedMask = (frequency >= 550) & (frequency <= 650)
+        restrictedPenalty[restrictedMask] = 10**10
+        print("Restricted Penalty: ", restrictedPenalty)
+               
+        totalPenalty = targetPenalty + restrictedPenalty
+        print("Total Penalty: ", totalPenalty)
+        return totalPenalty
+
+    p = ParticleSwarmOptimizer(SwarmSize, options=[2,2,0.1,10,iterations]) # Options order: Cognitive, Social, Inertia, Velocity Limit, Iterations. 
     p.optimize(ObjectiveFunction)
     p.search_space(UpperBound,LowerBound)
     p.populate()
     p.run()
+    
+    # Showing Particle Graphs. 
+    cycler = cycle(graphs[0].colors)
+    for i in range(1, SwarmSize+1):
+        graphs[i-1].showPlot("Spectrum Allocation: Swarm Particle {}".format(i), color=next(cycler))
+    plt.show()
