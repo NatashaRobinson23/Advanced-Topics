@@ -12,6 +12,7 @@ import random
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from itertools import cycle
+import numpy as np
 
 # Main Class for Particle Swarm Optimization
 class ParticleSwarmOptimizer(object):
@@ -75,24 +76,29 @@ class ParticleSwarmOptimizer(object):
             if (verbosity == True):
                 print('Iteration {:.0f} >> global best fitness {:.3f} | current mean fitness {:.3f} | iteration time {:.3f}'
                 .format(iteration + 1,self.global_best_fitness,self.current_fitness.mean(),toc-tic))
+                print("Final Frequency: ", self.frequency)
                 
 class ScatterPlot:
-    def __init__(self):
-        self.data = {'x': [], 'y': []}
+    def __init__(self, type, iterations):
+        self.type = type
+        self.data = {'x': [], 'y': list(range(0, iterations+1))}
         self.colors = ['red','orange','yellow','green','blue','purple','pink']
             
-    def append(self, x, y):
-        self.data['x'].append(x)
-        self.data['y'].append(y)
+    def append(self, x, index):
+        while index >= len(self.data['x']):
+            self.data['x'].append([])
+        self.data['x'][index].append(x)
             
-    def showPlot(self, title, color):
-        plt.plot(self.data['x'], self.data['y'], color=color)
-        plt.xlabel('Frequency')
+    def showPlot(self):
+        for i in range(0, len(self.data['x'])):
+            plt.plot(self.data['x'][i], self.data['y'], color=self.colors[i], label=f"Particle {i+1}: {round(self.data['x'][i][-1])}")
         plt.ylabel('Iteration')
-        plt.title(title)
+        plt.xlabel('Frequency')
+        plt.title(self.type)
         plt.grid(True)
+        plt.legend()
         plt.show()
-        
+                    
     def colorCheck(self, userTensor, index):
         return self.colors[userTensor[0][index]]
         
@@ -101,79 +107,95 @@ class ScatterPlot:
 if __name__ == "__main__":
     SwarmSize = 10
     iterations = 100
-    
-    # Initialising Scatter Plot Graphs
-    graphs = []        
-    iterationCount = [0]
-    for i in range(1, SwarmSize+1):
-        graphs.append(ScatterPlot())
-        
+           
     # Bounds -  Will be the frequency limits. 
     UpperBound = torch.tensor([2000])
     LowerBound = torch.tensor([0])
     
     # Time Intervals
+    timeTensor = torch.linspace(0, 24, steps=24)
 
     #  Creates a tensor of the types each particle are 
     roleList = ['Police', 'Civilian', 'Fire'] # For Readability: If 0, Police. If 1, Civilian. If 2, Fire. 
     userList = [[random.randint(0, 2) for _ in range(SwarmSize)]]
+    geographicalList = ['urban','rural','mountainous']
     userTensor = torch.tensor(userList)
-    plotCount = 0
-
+    
+    
+    # Initialising Scatter Plot Graphs
+    graphs = []        
+    #iterationCount = [0]
+    for role in roleList:
+        graphs.append(ScatterPlot(role, iterations))
+             
     # Objective Function. Creates a scoring system based on the constraints of the scenario. 
     def ObjectiveFunction(frequency):
-        
-        # Adding to Scatter Plot.
-        iterationCount[0] += 1
-        print("Frequency: ", frequency)
-        for index in range(0, SwarmSize):
-            graphs[index].append(frequency.numpy()[0][index], iterationCount[0])
-   
-        # Target Value: 500. Incentivises Frequencies to converge towards this point. Parabolic Function. 
-        target = torch.full((1,SwarmSize), 500.0)
-        targetPenalty = torch.square(frequency - target)
-        print("Target Penalty: ", targetPenalty)
-
-        # Detering away from 550-600.
+        # Detering away from 550-650.
         restrictedPenalty = torch.zeros((1, SwarmSize))
-        restrictedMask = (frequency >= 550) & (frequency <= 650)
+        restrictedMask = ((frequency >= 550) & (frequency <= 650))
         restrictedPenalty[restrictedMask] = 10**10
         print("Restricted Penalty: ", restrictedPenalty)
         
         # Proximity Evaluation. 
         # Punish based on how far the particle is from the average of other particles of the same group.
         proximityPenalty = torch.zeros((1, SwarmSize))
+        repulsionReward = torch.zeros((1, SwarmSize))
         uniqueTypes = torch.unique(userTensor) # The different types possible (0 Police, 1 Civilian, 2 Fire). 
-        for userType in uniqueTypes:
+
+        for index, userType in enumerate(uniqueTypes):
             frequenciesType = frequency[userTensor == userType] # Selects frequencies which are of the userType.            
-            distCentre = torch.mean(frequency[userTensor == userType]) 
-            proximityPenalty[userTensor == userType] = torch.sum(torch.abs(frequenciesType - distCentre)) 
+            typeMean = torch.mean(frequenciesType)
+            absDiff = torch.abs(frequenciesType - typeMean)
+            proximityPenalty[userTensor == userType] = torch.square(absDiff) 
                                  
             # Print Statements
             print("User Tensor: ", userTensor)
             print("Frequencies of the Current Type: ", userType, " ", frequenciesType)
-            print("Centre of Distribution: ", distCentre)
+            print("Centre of Distribution: ", typeMean)
             print("Proximity Penalty: ", proximityPenalty)
             
-        # Repulsion Evaluation. WIP
-        # Repels certain groups from converging on top of one another. 
-                    # PROXIMITY CHECK - REPELLING DIFFERENT TYPES
-            # Builds off the grouping similar types section. 
+            # Appending to the graphs based on types. 
+            for i in range(0, len(frequenciesType)):
+                graphs[index].append(frequenciesType.numpy()[i], i)    
             
+        # Repulsion Evaluation. WIP
+        # Repels certain groups from converging on top of one another.            
             for otherUserType in uniqueTypes:
                 if otherUserType != userType:
-                    otherFrequenciesType = frequency[userTensor == otherUserType]
-                    if len(frequenciesType > 1): # Verifying that there's more than one frequency.
-                        repulsion += torch.mean(torch.abs(frequenciesType - torch.mean(otherFrequenciesType)))
-                        print("Repulsion: ", repulsion)
-            
-            cost = similarity - repulsion
-            print("Cost function: ", cost) # The higher this is the better. 
-                
-         
-            
+                    otherFrequencyType = frequency[userTensor == otherUserType]
+                    otherTypeMean = torch.mean(otherFrequencyType)
+                    otherAbsDiff = torch.abs(frequenciesType - otherTypeMean)
+                    repulsionReward[userTensor == userType] += torch.square(otherAbsDiff)
+                    #repulsionReward[userTensor == userType] = 0
 
-        totalPenalty = targetPenalty + restrictedPenalty + (10*proximityPenalty) # It is trying to minimise this. 
+                    #if torch.abs(frequenciesType - otherTypeMean) != torch.zeros(len(frequenciesType)):
+                    #    repulsionReward[userTensor == userType] += torch.square(torch.abs(frequenciesType - otherTypeMean))
+
+                    print(repulsionReward)
+                    # make tensor of each type
+                    # calculate square(current particle - mean(1 other type))
+                    # repulsion penalty = all the calculated penalties summed
+
+            print("Repulsion Penalty: ", repulsionReward)                
+         
+            # frequency to the other mean squared. 
+
+        # USE CASES:
+        # FIRE: HF/VHF/UHF
+        # EMERGENCY SERVICES: HF/VHF/UHF
+        # POLICE: HF/UHF    
+        
+        # HF is more reliable at night. 
+        # Mountains can obstruct HF signals. 
+        # 
+        # Frequency Capabilties.
+        #timeReward = torch.zeros((1, SwarmSize))     
+        #timeReliability = ((timeTensor >= 18) | (timeTensor <= 6))
+        #timeReward[timeReliability] = 1000
+        
+        #locationPenalty = torch.zeros((1, SwarmSize))         
+
+        totalPenalty = restrictedPenalty + (proximityPenalty) - (repulsionReward) # It is trying to minimise this. 
         print("Total Penalty: ", totalPenalty)
         return totalPenalty
 
@@ -184,7 +206,5 @@ if __name__ == "__main__":
     p.run()
     
     # Showing Particle Graphs. 
-    #cycler = cycle(graphs[0].colors)
-    for i in range(1, SwarmSize+1):
-        graphs[i-1].showPlot("Spectrum Allocation: Swarm Particle {}".format(i), color=graphs[0].colorCheck(userTensor,i-1)) #color=next(cycler))
-    plt.show()
+    for graph in graphs:
+        graph.showPlot()
