@@ -10,22 +10,21 @@ import matplotlib.pyplot as plt
 
 # Main Class for Particle Swarm Optimization
 class ParticleSwarmOptimizer(object):
-    def __init__(self,swarmSize=10,c_cognitive=2, c_social=2, inertiaWeight=0.1, velocityLimit=0.1, maxIterations=100, roles=['Police', 'Civilian', 'Fire'], timeSlots=torch.linspace(0, 24, steps=10), geographical=['Region1','Mountain','Region2'], upperBound=2000, lowerBound=0):
-        self.swarmSize = swarmSize
-        self.c_cognitive = c_cognitive # Amount the particle is influenced by the personal best. 
-        self.c_social = c_social # Amount the particle is influenced by the global best.
-        self.inertiaWeight = inertiaWeight # Influence of the current velocity on its future velocity. 
-        self.velocityLimit = velocityLimit # How fast the particles move within the space. 
-        self.maxIterations = maxIterations # How many times the code runs. 
-        self.upperBound = upperBound
-        self.lowerBound = lowerBound
+    def __init__(self):
+        self.swarmSize = 10
+        self.c_cognitive = 2 # Amount the particle is influenced by the personal best. 
+        self.c_social = 2 # Amount the particle is influenced by the global best.
+        self.inertiaWeight = 0.1 # Influence of the current velocity on its future velocity. 
+        self.velocityLimit = 0.1 # How fast the particles move within the space. 
+        self.maxIterations = 100 # How many times the code runs. 
+        self.frequencyBounds = [2000, 0] # Upper and lower frequency bounds. 
         
         # Addressing the requirements. 
-        self.roles = roles
-        self.timeSlots = timeSlots
-        self.geographical = geographical
-        self.userList = [[random.randint(0, 2) for temp in range(self.swarmSize)]]
-        self.userTensor = torch.tensor(self.userList)
+        self.forbiddenFrequencies = [650, 550] # Forbidden frequenciues (eg distress beacon)
+        self.roles = ['Police', 'Civilian', 'Fire']
+        self.timeSlots = torch.tensor([[0,2,4,6,8,10,12,14,16,18]])
+        self.geographical = ['Region1','Mountain','Region2']
+        self.userTensor = torch.tensor([[random.randint(0, 2) for temp in range(self.swarmSize)]])
         
     def visualise(self):
         # Showing Particle Graphs. 
@@ -41,19 +40,23 @@ class ParticleSwarmOptimizer(object):
     # Objective Function. Creates a scoring system based on the constraints of the scenario. 
     def objectiveFunction(self, frequency):
         
-        # Detering away from 550-650. Forbidden frequencies - distress beacons. 
+        # CONSTRAINT 1: Frequencies that can't be used eg distress beacons. 
+        # Default deters away from frequencies 550-650.
         restrictedPenalty = torch.zeros((1, self.swarmSize))
-        restrictedMask = ((frequency >= 550) & (frequency <= 650))
+        restrictedMask = ((frequency >= self.forbiddenFrequencies[1]) & (frequency <= self.forbiddenFrequencies[0]))
         restrictedPenalty[restrictedMask] = 10**10
         print("Restricted Penalty: ", restrictedPenalty)
         
-        # Proximity Evaluation. 
+        # CONSTRANT 2: Frequency used by particular operators eg police need to talk to all other police in the area. 
+        # Solution (Part 1): Proximity Evaluation. Grouped together on adjacent channels - ensures they can contact one another.  
         # Punish based on how far the particle is from the average of other particles of the same group.
         proximityPenalty = torch.zeros((1, self.swarmSize))
         repulsionReward = torch.zeros((1, self.swarmSize))
         uniqueTypes = torch.unique(self.userTensor) # The different types possible (0 Police, 1 Civilian, 2 Fire). 
 
         for index, userType in enumerate(uniqueTypes):
+            print(userType)
+            print(index)
             frequenciesType = frequency[self.userTensor == userType] # Selects frequencies which are of the userType.            
             typeMean = torch.mean(frequenciesType)
             absDiff = torch.abs(frequenciesType - typeMean)
@@ -62,32 +65,32 @@ class ParticleSwarmOptimizer(object):
             # Print Statements
             print("User Tensor: ", self.userTensor)
             print("Frequencies of the Current Type: ", userType, " ", frequenciesType)
-            print("Centre of Distribution: ", typeMean)
-            print("Proximity Penalty: ", proximityPenalty)
+            print("Sim Mean: ", typeMean)
+            print("Proximity Penalty current Type: ", proximityPenalty[self.userTensor == userType])
             
             # Appending to the graphs based on types. 
             for i in range(0, len(frequenciesType)):
                 self.graphs[index].append(frequenciesType.numpy()[i], i)    
-            
-            # Repulsion Evaluation. 
-            # Repels certain groups from placing near one another.           
+                
+            # Solution (Part 2): Repulsion Evaluation. Minimises interference by ensuring other groups are elsewhere. 
+            # Repels certain groups from placing near one another. 
+            # Punish based on how close the particle is from the average of the other particles of different groups.           
             for otherUserType in uniqueTypes:
                 if otherUserType != userType:
                     otherFrequencyType = frequency[self.userTensor == otherUserType] # Make a tensor for each group type. 
                     otherTypeMean = torch.mean(otherFrequencyType) # Calculate the mean of the group type. 
                     otherAbsDiff = torch.abs(frequenciesType - otherTypeMean) # Calculate the absolute difference between frequencies and other group mean.
                     repulsionReward[self.userTensor == userType] += torch.square(otherAbsDiff) # Append repulsion score. PSO will seek to maximise this value. 
-
-                    print(repulsionReward)
-
-            print("Repulsion Penalty: ", repulsionReward)                
-        totalPenalty = restrictedPenalty + (proximityPenalty) - (repulsionReward) # It is trying to minimise this. 
+                    
+                    print("Diff mean: ", otherTypeMean)
+            print("Repulsion Penalty: ", repulsionReward[self.userTensor == userType])                
+        totalPenalty = restrictedPenalty + (0.05*proximityPenalty) - (0.009*repulsionReward) # It is trying to minimise this. 
         print("Total Penalty: ", totalPenalty)
         return totalPenalty
 
     def search_space(self):
-        self.upperBound = torch.tensor([self.upperBound])
-        self.lowerBound = torch.tensor([self.lowerBound])
+        self.upperBound = torch.tensor([self.frequencyBounds[0]])
+        self.lowerBound = torch.tensor([self.frequencyBounds[1]])
         self.dimensionality = self.upperBound.size()[0]    
 
     def populate(self):
@@ -134,6 +137,13 @@ class ParticleSwarmOptimizer(object):
                 .format(iteration + 1,self.globalBestFitness,self.currentFitness.mean(),toc-tic))
                 print("Final Frequency: ", self.frequency)
                 
+    def executeTool(self):
+        p.initialiseGraphs()
+        p.search_space()
+        p.populate()
+        p.run()
+        p.visualise()
+          
 class ScatterPlot:
     def __init__(self, type, iterations):
         self.type = type
@@ -161,6 +171,8 @@ class ScatterPlot:
 #-----------------------------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    
+    # Prompting the user for input to configure the tool. 
 
     print("|===============================================================|")
     print("|Default Parameters:                                            |")
@@ -173,8 +185,8 @@ if __name__ == "__main__":
     print("|[6]  roles (randomly assigned): Police, Civilian and Fire.     |")
     print("|[7]  timeSlots: 0-24, <swarm size> steps.                      |")
     print("|[8]  geographical: Region1, Mountain, Region2.                 |")
-    print("|[9]  upperBound: 2000                                          |")
-    print("|[10] lowerBound: 0                                             |")
+    print("|[9]  frequencyBounds: 0 - 2000                                 |")
+    print("|[10] forbiddenFrequencies: 550 - 650                           |")
     print("|===============================================================|")
     
     p = ParticleSwarmOptimizer()
@@ -215,19 +227,24 @@ if __name__ == "__main__":
                         geo.append(input(f"Enter geographical location {i+1}: "))
                     p.geographical = geo
                 case 9:
-                    upperBound = int(input("Enter upper bound: "))
-                    p.upperBound = upperBound
+                    bounds = []
+                    bounds[0] = int(input("Enter upper frequency bound: "))
+                    bounds[1] = int(input("Enter lower freqyency bound: "))
+                    p.frequencyBounds = bounds
                 case 10:
-                    lowerBound = int(input("Enter lower bound: "))
-                    p.lowerBound = lowerBound
+                    forbidden = []
+                    forbidden[0] = int(input("Enter forbidden range (upper bound): "))
+                    forbidden[1] = int(input("Enter forbidden range (lower bound): "))
+                    p.forbiddenFrequencies = forbidden
+                    
+                     
+                    
+                    
                 
             inputBool = str(input("Do you want to change other parameters? [y/n]: "))
     
-    p.initialiseGraphs()
-    p.search_space()
-    p.populate()
-    p.run()
-    p.visualise()
+    p.executeTool()
+
     
 
     
