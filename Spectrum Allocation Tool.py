@@ -13,10 +13,10 @@ import numpy as np
 class ParticleSwarmOptimizer(object):
     def __init__(self):
         self.swarmSize = 10
-        self.c_cognitive = 10 # Amount the particle is influenced by the personal best. 
-        self.c_social = 10 # Amount the particle is influenced by the global best. #DEFault 2
-        self.inertiaWeight = 2 # Influence of the current velocity on its future velocity. 
-        self.velocityLimit = 2 # How fast the particles move within the space. 
+        self.c_cognitive = 1 # Amount the particle is influenced by the personal best. 
+        self.c_social = 1 # Amount the particle is influenced by the global best. #DEFault 2
+        self.inertiaWeight = 1 # Influence of the current velocity on its future velocity. 
+        self.velocityLimit = 0.1 # How fast the particles move within the space. 
         self.maxIterations = 100 # How many times the code runs. 
         self.frequencyBounds = [np.log10(30000), np.log10(3000)] # Upper and lower frequency bounds. Default is the HF band.  
         
@@ -44,9 +44,9 @@ class ParticleSwarmOptimizer(object):
     def objectiveFunction(self, frequency):
         
         # CONSTRAINT 1: Frequencies that can't be used eg distress beacons. 
-        # Default deters away from frequencies 550-650.
+        # Default deters away from frequencies 3500-3600.
         restrictedPenalty = torch.zeros((self.swarmSize), dtype=torch.float)
-        restrictedMask = ((frequency >= self.forbiddenFrequencies[1]) & (frequency <= self.forbiddenFrequencies[0]))
+        restrictedMask = ((frequency >= np.log10(self.forbiddenFrequencies[1])) & (frequency <= np.log10(self.forbiddenFrequencies[0])))
         restrictedPenalty[restrictedMask] = 10**10
         print("Restricted Penalty: ", restrictedPenalty)
         
@@ -80,7 +80,7 @@ class ParticleSwarmOptimizer(object):
                     otherFrequencyType = frequency[self.userTensor == otherUserType] # Make a tensor for each group type. 
                     otherTypeMean = torch.mean(otherFrequencyType) # Calculate the mean of the group type. 
                     otherAbsDiff = torch.abs(frequenciesType - otherTypeMean) # Calculate the absolute difference between frequencies and other group mean.
-                    repulsionReward[self.userTensor == userType] += torch.ones(len(frequenciesType)) / (torch.ones(len(frequenciesType)) + torch.square(otherAbsDiff)) # Append repulsion score. PSO will seek to maximise this value. 
+                    repulsionReward[self.userTensor == userType] += torch.ones(len(frequenciesType)) / (torch.ones(len(frequenciesType))*1.0e-10 + torch.square(otherAbsDiff)) # Append repulsion score. PSO will seek to maximise this value. 
                     
                     print("Diff mean: ", otherTypeMean)
             print("Repulsion Penalty: ", repulsionReward[self.userTensor == userType])        
@@ -126,20 +126,18 @@ class ParticleSwarmOptimizer(object):
         self.velocity = (2*self.velocityLimit*torch.rand(self.swarmSize)) - self.velocityLimit
         
     def minVal(self, tensor):
+        minVal = tensor[0]
         if len(tensor) > 0:
-            
-            minVal = tensor[0]
-            
             for value in tensor:
                 if value < minVal:
                     minVal = value
             print("function min: ", minVal)
-            return float(minVal.item())
-        return 50 # Placeholder
+        return float(minVal.item())
     
     def getIndex(self, value, tensor):
         for index, current in enumerate(tensor):
             if current == value:
+                print("Index: ", index)
                 return index
     
     def enforce_bounds(self):
@@ -152,9 +150,10 @@ class ParticleSwarmOptimizer(object):
         self.currentFitness = self.objectiveFunction(self.frequency) # Evaluates the fitness function at each particle position. 
         self.particleBest = self.frequency
         self.particleBestFitness = self.currentFitness
-        self.globalBest = self.frequency
-        self.globalBestFitness = self.frequency
+        self.globalBest = torch.full((self.swarmSize,), 99.0) # Placeholder
+        self.globalBestFitness = torch.full((self.swarmSize,), 99999.0) # Placeholder
 
+        # Multiple different swarms - global bests/fitnesses
         for i in range(0,  len(torch.unique(self.userTensor))):
             groupMask = (self.userTensor == i)
             minFitness = self.minVal(self.particleBestFitness[groupMask])
@@ -170,8 +169,6 @@ class ParticleSwarmOptimizer(object):
 
         for iteration in range(self.maxIterations):
             tic = time.monotonic()
-
-            
             self.velocity = ((self.inertiaWeight*self.velocity) +  # Current velocity times some weight
                             (self.c_cognitive*torch.rand(1)*(self.particleBest-self.frequency)) + # plus how far it is from its personal best times a random number. 
                             (self.c_social*torch.rand(1)*(self.globalBest-self.frequency)))
@@ -184,6 +181,7 @@ class ParticleSwarmOptimizer(object):
             self.particleBest[localMask] = self.frequency[localMask] # Seems fine. 
                           
             
+            # Multiple different swarms - global bests/fitnesses
             for i in range(0, len(torch.unique(self.userTensor))):
                 groupMask = (self.userTensor == i)
                 minFitness =self.minVal(self.currentFitness[groupMask])
@@ -197,10 +195,7 @@ class ParticleSwarmOptimizer(object):
                 if minFitness < oldMin:
                     self.globalBestFitness.masked_fill_(groupMask, minFitness)
                     self.globalBest.masked_fill_(groupMask, minValue)
-                    
-
-
-                   
+                                       
             print("!!!Frequencies: ", self.frequency)
             print("!!!Penalties: ", self.currentFitness)
             print("!!!Global Best: ", self.globalBest)
