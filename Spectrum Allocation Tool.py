@@ -32,7 +32,7 @@ class ParticleSwarmOptimizer(object):
         self.roleList = ['Police', 'CFS', 'Civilians']
         self.userList = [random.randint(0, len(self.roleList)-1) for temp in range(self.swarmSize)]
         self.userTensor = torch.tensor(self.userList).cuda()
-        self.timeSlots = torch.linspace(0, 24, steps=self.swarmSize).cuda()
+        self.timeSlots = torch.torch.randint(1, 25, (3,)).cuda()
         self.geographical = ['Region1','Mountain','Region2']
           
     def visualise(self):
@@ -80,9 +80,15 @@ class ParticleSwarmOptimizer(object):
                     otherFrequencyType = frequency[self.userTensor == otherUserType] # Make a tensor for each group type. 
                     otherTypeMean = torch.mean(otherFrequencyType).cuda() # Calculate the mean of the group type. 
                     otherAbsDiff = torch.abs(frequenciesType - otherTypeMean).cuda() # Calculate the absolute difference between frequencies and other group mean.
-                    repulsionPenalty[self.userTensor == userType] += torch.ones(len(frequenciesType)).cuda() / (torch.ones(len(frequenciesType))).cuda() *1.0e-10 + torch.square(otherAbsDiff).cuda() # Append repulsion score. PSO will seek to maximise this value.        
-            
-        totalPenalty = restrictedPenalty + (200*proximityPenalty) + (repulsionPenalty) # It is trying to minimise this. 
+                    
+                    # CONSTRAINT 3: Time of day that the frequency is used - e.g. can use the same frequency at different times of day.
+                    # Peak Time is define from 5pm to 12am. If in peak time, the repulsion is stronger (doubled) to further avoid interferences. 
+                    if self.timeSlots[otherUserType] >= 17:
+                        repulsionPenalty[self.userTensor == userType] += 2*(torch.ones(len(frequenciesType)).cuda() / (torch.ones(len(frequenciesType))).cuda() *1.0e-10 + torch.square(otherAbsDiff).cuda()) # Penalty is doubled because of peak congestion time.         
+                    else:
+                        repulsionPenalty[self.userTensor == userType] += (torch.ones(len(frequenciesType)).cuda() / (torch.ones(len(frequenciesType))).cuda() *1.0e-10 + torch.square(otherAbsDiff).cuda()) # Append repulsion score. PSO will seek to maximise this value.   
+        
+        totalPenalty = restrictedPenalty + (200*proximityPenalty) + (repulsionPenalty) # PSO tool is trying to minimise this. 
         return totalPenalty
 
     def search_space(self):
@@ -215,7 +221,7 @@ if __name__ == "__main__":
     print("|[4]  velocityLimit: 0.5                                        |")
     print("|[5]  maxIterations: 100                                        |")
     print("|[6]  roles (randomly assigned): Police, CFS, Civilians.        |")
-    print("|[7]  timeSlots: 0-24, <swarm size> steps.                      |")
+    print("|[7]  timeSlots: 1-24, one for each role allocated.             |")
     print("|[8]  geographical: Region1, Mountain, Region2.                 |")
     print("|[9]  frequencyBounds: 3000 - 30000 (HF Band - kHZ)             |")
     print("|[10] forbiddenFrequencies: 3500 - 3600                         |")
@@ -256,9 +262,9 @@ if __name__ == "__main__":
                     p.roleList = roles
                 case 7:
                     times = []
-                    for i in range(0, p.swarmSize):
-                        times.append(input(f"Enter time {i+1}: "))
-                    p.timeSlots = times
+                    for i in range(0, len(p.roleList)):
+                        times.append(int(input(f"Enter time {i+1}: ")))
+                    p.timeSlots = torch.tensor(times).cuda()
                 case 8:
                     numGeo = int(input("Enter number of desired regions: "))
                     geo = []
